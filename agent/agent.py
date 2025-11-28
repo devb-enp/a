@@ -42,8 +42,9 @@ def get_combined_chat_context(
 ) -> llm.ChatContext:
     """Get all chat messages from all participants sorted by timestamp."""
     combined_context = llm.ChatContext()
-    for item in chat_context.items:
-        combined_context.insert(item=item)
+    if chat_context:
+        for item in chat_context.items:
+            combined_context.insert(item=item)
 
     for participant_identity, chat_context in chat_contexts.items():
         msg = ""
