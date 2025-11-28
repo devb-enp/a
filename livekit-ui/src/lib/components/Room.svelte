@@ -290,6 +290,9 @@
           async (reader) => {
             const data = JSON.parse(await reader.readAll());
             console.log("Received coordinator_broadcast:", data);
+            window.speechSynthesis.speak(
+              new SpeechSynthesisUtterance(data.message)
+            );
             chatMessages = [
               ...chatMessages,
               {

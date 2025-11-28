@@ -219,13 +219,6 @@ class Coordinator:
                         self.chat_ctx.add_message(
                             role="assistant", content=response_text
                         )
-                        # Broadcast the text response as well
-                        await self.room.local_participant.send_text(
-                            text=json.dumps(
-                                {"type": "broadcast", "message": response_text}
-                            ),
-                            topic="coordinator_broadcast",
-                        )
 
                 except Exception as e:
                     logger.error(f"Coordinator error: {e}")
