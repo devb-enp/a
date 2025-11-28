@@ -1,0 +1,15 @@
+services:
+  ai-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: python agent.py start
+    restart: always
+    network_mode: bridge
+    tty: true
+    volumes:
+      - .:/app/:cached
+      - ./.docker/.ipython:/root/.ipython:cached
+      - ~/.aws:/home/appuser/.aws:ro
+    env_file:
+      - .env

@@ -1,0 +1,36 @@
+We're making an AI agent using livekit agent framework.
+The use case is to engage users in a scenario where they can interact with an AI agent.
+For example
+
+- a teacher agent can interact with students in a meeting and teach a topic and make it interactive by taking on quizes(MCQ or Fill in the blanks), polls or sending private messages using tool calls.
+- A person can create a murder mystery scenario and the AI will coordinate the scenario and make it interactive by taking on quizes(MCQ or Fill in the blanks), polls or sending private messages using tool calls.
+- A person can create a dungeon and dragons scenario and the AI will coordinate the scenario and make it interactive by taking on quizes(MCQ or Fill in the blanks), polls or sending private messages using tool calls.
+
+The appliction will have the following flow:
+All Users can join the meeting and they'll provide their name when they join (Names should be unique so that AI can distinguish between users)
+There'll be a button that says ready, once all users are ready, the AI agent will start the scenario.
+Any user joining after the meeting can get a summarized version of the scenario + chat context when he clicks on summarize.
+Each Users Name will be used as participant identity in the AI agent framework.
+Once the scenario starts, The agent will take lead and coordinate the scenario.
+It can do the following: 
+    - Send private messages to users using tool calls 
+    - Broadcast messages to all users 
+    - Take on polls and quizes(MCQ or Fill in the blanks) 
+    - Show popups to all users with a message 
+    - Show popups to one user with a message 
+    - Start a interactive game which will be a popup and can be anything, the only thing the agent need to know is the description of the game and the user's result after the playing the game. which will be added to the chat context (The interactive game will use a callback to send the result of the game )
+    - Generate an image using genai nanobanana api and show it to everyone along with a subtitle (will be helpful in Dungeon and Dragons)
+
+use llm.txt for livekit if you want to learn more about the syntax for the AI agent framework.
+
+Right now The participants are joining and the agent is joining and they maintain a chat context. 
+What we need to do is that we should add a coordinator agent in agent.py which will engage with the participants and coordinate the scenario.
+It'll get triggered once there's a 3 secs pause from all the participants.
+The timer should be reset whenever there's a transcript from any of the participants.
+
+Write a good prompt for the coordinator agent so that it can have the participants play dungeon and dragons
+
+Add all the necessary tool callings and sdk calls to make it work 
+
+register the rpc calls for individual communication and send text and subscribe to it from the user side for broadcast messages
+
