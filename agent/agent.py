@@ -36,6 +36,31 @@ logger = logging.getLogger("transcriber")
 
 # This example demonstrates how to transcribe audio from multiple remote participants.
 # It creates agent sessions for each participant and transcribes their audio.
+def get_combined_chat_context(
+    chat_contexts: dict[str, llm.ChatContext],
+    chat_context: llm.ChatContext | None = None,
+) -> llm.ChatContext:
+    """Get all chat messages from all participants sorted by timestamp."""
+    combined_context = llm.ChatContext()
+    for item in chat_context.items:
+        combined_context.insert(item=item)
+
+    for participant_identity, chat_context in chat_contexts.items():
+        msg = ""
+        if len(chat_context.items) > 0:
+            for item in chat_context.items:
+                msg += (
+                    item.content
+                    if isinstance(item.content, str)
+                    else " ".join(item.content)
+                ) + "\n"
+        combined_context.add_message(
+            role="user",
+            content=f"Participant Name: {participant_identity}\nMessage: ```{msg}```",
+            created_at=item.created_at,
+        )
+
+    return combined_context
 
 
 class Transcriber(Agent):
@@ -44,6 +69,7 @@ class Transcriber(Agent):
         participant_identity: str,
         chat_context: llm.ChatContext,
         room: rtc.Room,
+        coordinator,
     ):
         super().__init__(
             instructions="not-needed",
@@ -52,6 +78,7 @@ class Transcriber(Agent):
         self.participant_identity = participant_identity
         self.chat_context = chat_context
         self.room = room
+        self.coordinator = coordinator
 
     async def on_user_turn_completed(
         self, chat_ctx: llm.ChatContext, new_message: llm.ChatMessage
@@ -81,13 +108,14 @@ class Transcriber(Agent):
             ),
             topic="transcription",
         )
-
+        self.coordinator.on_activity(self.participant_identity, user_transcript)
         raise StopResponse()
 
 
 class Coordinator:
-    def __init__(self, ctx, sessions):
+    def __init__(self, ctx, sessions, chat_contexts):
         self.sessions = sessions
+        self._chat_contexts = chat_contexts
         self.ctx = ctx
         self.room = ctx.room
         self.llm = openai.LLM(model="gpt-4o")
@@ -98,6 +126,8 @@ class Coordinator:
                 "You are a Dungeon Master for a D&D game. Your goal is to guide the players through a scenario. "
                 "Engage the participants, describe the scene, and use your tools to make it interactive. "
                 "You can send private messages, polls, popups, and generate images using tool calls "
+                "Please respond with only plain text paragraph without markdown formatting "
+                "Respond with maximum of 5 sentences"
             ),
         )
         self.last_activity = time.time()
@@ -121,9 +151,6 @@ class Coordinator:
         self.last_activity = time.time()
         self.waiting_for_user = False  # User spoke, so we can monitor silence again
         # Add user activity to context so Coordinator knows what happened
-        self.chat_ctx.add_message(
-            role="user", content=f"{participant_identity}: {text}"
-        )
 
     async def send_text(self, text: str):
         audio_source = rtc.AudioSource(44100, 1)
@@ -155,13 +182,24 @@ class Coordinator:
 
             # Check for silence (3 seconds)
             # Only check if we are NOT waiting for user input
-            if not self.waiting_for_user and time.time() - self.last_activity > 3.0:
+
+            if not self.waiting_for_user and time.time() - self.last_activity > 5.0:
                 logger.info("Silence detected, triggering Coordinator")
                 self.processing = True
                 try:
                     # Generate response
+                    new_chat = get_combined_chat_context(
+                        self._chat_contexts, self.chat_ctx
+                    )
+
                     stream = self.llm.chat(
-                        chat_ctx=self.chat_ctx,
+                        chat_ctx=new_chat,
+                        tools=[
+                            # self.send_private_message,
+                            # self.broadcast_message,
+                            # self.create_poll,
+                            # self.show_popup,
+                        ],
                         # TODO: ADD tools here
                     )
 
@@ -183,7 +221,7 @@ class Coordinator:
                         )
                         # Broadcast the text response as well
                         await self.room.local_participant.send_text(
-                            payload=json.dumps(
+                            text=json.dumps(
                                 {"type": "broadcast", "message": response_text}
                             ),
                             topic="coordinator_broadcast",
@@ -236,7 +274,7 @@ class Coordinator:
 
         # Broadcast results to UI
         await self.room.local_participant.send_text(
-            payload=json.dumps({"type": "poll_ended", "results": results}),
+            text=json.dumps({"type": "poll_ended", "results": results}),
             topic="coordinator_poll_end",
         )
 
@@ -256,7 +294,7 @@ class Coordinator:
         # Python SDK Room.local_participant.send_text supports destination_identities.
 
         await self.room.local_participant.send_text(
-            payload=json.dumps({"type": "private_message", "message": message}),
+            text=json.dumps({"type": "private_message", "message": message}),
             topic="coordinator_private",
             destination_identities=[identity],
         )
@@ -267,7 +305,7 @@ class Coordinator:
         """Broadcast a message to all participants."""
         logger.info(f"Broadcasting message: {message}")
         await self.room.local_participant.send_text(
-            payload=json.dumps({"type": "broadcast", "message": message}),
+            text=json.dumps({"type": "broadcast", "message": message}),
             topic="coordinator_broadcast",
         )
         return "Message broadcasted"
@@ -290,7 +328,7 @@ class Coordinator:
         }
 
         await self.room.local_participant.send_text(
-            payload=json.dumps(
+            text=json.dumps(
                 {
                     "type": "poll",
                     "id": poll_id,
@@ -313,7 +351,7 @@ class Coordinator:
         logger.info(f"Showing popup to {recipient_identity or 'all'}: {message}")
         destinations = [recipient_identity] if recipient_identity else []
         await self.room.local_participant.send_text(
-            payload=json.dumps({"type": "popup", "message": message}),
+            text=json.dumps({"type": "popup", "message": message}),
             topic="coordinator_popup",
             destination_identities=destinations,
         )
@@ -324,7 +362,7 @@ class Coordinator:
         """Start an interactive game with a description."""
         logger.info(f"Starting game: {description}")
         await self.room.local_participant.send_text(
-            payload=json.dumps({"type": "game", "description": description}),
+            text=json.dumps({"type": "game", "description": description}),
             topic="coordinator_game",
         )
         return "Game started"
@@ -339,9 +377,7 @@ class Coordinator:
         image_url = f"https://placehold.co/600x400?text={encoded_prompt}"
 
         await self.room.local_participant.send_text(
-            payload=json.dumps(
-                {"type": "image", "url": image_url, "subtitle": subtitle}
-            ),
+            text=json.dumps({"type": "image", "url": image_url, "subtitle": subtitle}),
             topic="coordinator_image",
         )
         return "Image generated and shown"
@@ -353,7 +389,7 @@ class MultiUserTranscriber:
         self._sessions: dict[str, AgentSession] = {}
         self._chat_contexts: dict[str, llm.ChatContext] = {}
         self._tasks: set[asyncio.Task] = set()
-        self.coordinator = Coordinator(ctx, self._sessions)
+        self.coordinator = Coordinator(ctx, self._sessions, self._chat_contexts)
 
     def start(self):
         self.ctx.room.on("participant_connected", self.on_participant_connected)
@@ -383,33 +419,13 @@ class MultiUserTranscriber:
         """Get all chat contexts for all participants."""
         return self._chat_contexts.copy()
 
-    def get_combined_chat_context(self) -> llm.ChatContext:
-        """Get all chat messages from all participants sorted by timestamp."""
-        combined_context = llm.ChatContext()
-
-        for participant_identity, chat_context in self._chat_contexts.items():
-            msg = ""
-            if len(chat_context.items) > 0:
-                for item in chat_context.items:
-                    msg += (
-                        item.content
-                        if isinstance(item.content, str)
-                        else " ".join(item.content)
-                    ) + "\n"
-            combined_context.add_message(
-                role="user",
-                content=f"Participant Name: {participant_identity}\nMessage: ```{msg}```",
-            )
-
-        return combined_context
-
     async def handle_summarize_request(self, data: rtc.RpcInvocationData) -> str:
         """Handle RPC request to summarize the meeting."""
         try:
             logger.info(f"Received summarization request from {data.caller_identity}")
 
             # Get all messages sorted by timestamp
-            all_messages = self.get_combined_chat_context()
+            all_messages = get_combined_chat_context(self._chat_contexts)
 
             if len(all_messages.items) == 0:
                 return "No conversation has occurred yet."
@@ -582,6 +598,7 @@ Conversation:
                 participant_identity=participant.identity,
                 chat_context=chat_context,
                 room=self.ctx.room,
+                coordinator=self.coordinator,
             ),
             room=self.ctx.room,
             room_options=room_io.RoomOptions(
